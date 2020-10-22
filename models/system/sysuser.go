@@ -3,10 +3,10 @@ package system
 import (
 	"errors"
 	"ferry/global/orm"
+	"ferry/pkg/logger"
 	"ferry/tools"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -73,8 +73,9 @@ func (SysUser) TableName() string {
 }
 
 type SysUserPwd struct {
-	OldPassword string `json:"oldPassword"`
-	NewPassword string `json:"newPassword"`
+	OldPassword  string `json:"oldPassword" form:"oldPassword"`
+	NewPassword  string `json:"newPassword" form:"newPassword"`
+	PasswordType int    `json:"passwordType" form:"passwordType"`
 }
 
 type SysUserPage struct {
@@ -205,14 +206,14 @@ func (e *SysUser) GetPage(pageSize int, pageIndex int) ([]SysUserPage, int, erro
 	table = table.Joins("left join sys_dept on sys_dept.dept_id = sys_user.dept_id")
 
 	if e.Username != "" {
-		table = table.Where("username = ?", e.Username)
+		table = table.Where("sys_user.username like ?", "%"+e.Username+"%")
 	}
 	if e.Status != "" {
 		table = table.Where("sys_user.status = ?", e.Status)
 	}
 
 	if e.Phone != "" {
-		table = table.Where("sys_user.phone = ?", e.Phone)
+		table = table.Where("sys_user.phone like ?", "%"+e.Phone+"%")
 	}
 
 	if e.DeptId != 0 {
@@ -303,7 +304,7 @@ func (e *SysUser) SetPwd(pwd SysUserPwd) (Result bool, err error) {
 		if strings.Contains(err.Error(), "hashedPassword is not the hash of the given password") {
 			tools.HasError(err, "密码错误(代码202)", 500)
 		}
-		log.Print(err)
+		logger.Info(err)
 		return
 	}
 	e.Password = pwd.NewPassword

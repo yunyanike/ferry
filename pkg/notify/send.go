@@ -3,10 +3,11 @@ package notify
 import (
 	"bytes"
 	"ferry/models/system"
+	"ferry/pkg/logger"
 	"ferry/pkg/notify/email"
 	"text/template"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 /*
@@ -27,6 +28,7 @@ type BodyData struct {
 	Content       string      // 通知的内容
 	Description   string      // 表格上面的描述信息
 	ProcessId     int         // 流程ID
+	Domain        string      // 域名地址
 }
 
 func (b *BodyData) ParsingTemplate() (err error) {
@@ -40,6 +42,7 @@ func (b *BodyData) ParsingTemplate() (err error) {
 		return
 	}
 
+	b.Domain = viper.GetString("settings.domain.url")
 	err = tmpl.Execute(&buf, b)
 	if err != nil {
 		return
@@ -74,7 +77,7 @@ func (b *BodyData) SendNotify() (err error) {
 				}
 				err = b.ParsingTemplate()
 				if err != nil {
-					log.Errorf("模版内容解析失败，%v", err.Error())
+					logger.Errorf("模版内容解析失败，%v", err.Error())
 					return
 				}
 				go email.SendMail(emailList, b.Subject, b.Content)

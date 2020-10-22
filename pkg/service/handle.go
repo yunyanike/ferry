@@ -44,7 +44,7 @@ type Handle struct {
 	updateValue      map[string]interface{}
 	stateValue       map[string]interface{}
 	targetStateValue map[string]interface{}
-	workOrderData    [][]byte
+	WorkOrderData    [][]byte
 	workOrderDetails process.WorkOrderInfo
 	endHistory       bool
 	flowProperties   int
@@ -111,7 +111,11 @@ func (h *Handle) circulation() (err error) {
 		stateValue []byte
 	)
 
-	err = GetVariableValue(h.updateValue["state"].([]interface{}), h.workOrderDetails.Creator)
+	stateList := make([]interface{}, 0)
+	for _, v := range h.updateValue["state"].([]map[string]interface{}) {
+		stateList = append(stateList, v)
+	}
+	err = GetVariableValue(stateList, h.workOrderDetails.Creator)
 	if err != nil {
 		return
 	}
@@ -155,7 +159,7 @@ func (h *Handle) ConditionalJudgment(condExpr map[string]interface{}) (result bo
 		}
 	}()
 
-	for _, data := range h.workOrderData {
+	for _, data := range h.WorkOrderData {
 		var formData map[string]interface{}
 		err = json.Unmarshal(data, &formData)
 		if err != nil {
@@ -239,7 +243,7 @@ func (h *Handle) ConditionalJudgment(condExpr map[string]interface{}) (result bo
 }
 
 // 并行网关，确认其他节点是否完成
-func (h *Handle) completeAllParallel(c *gin.Context, target string) (statusOk bool, err error) {
+func (h *Handle) completeAllParallel(target string) (statusOk bool, err error) {
 	var (
 		stateList []map[string]interface{}
 	)
@@ -320,6 +324,8 @@ func (h *Handle) HandleWorkOrder(
 	sourceState string,
 	circulationValue string,
 	flowProperties int,
+	remarks string,
+	tpls []map[string]interface{},
 ) (err error) {
 	h.workOrderId = workOrderId
 	h.flowProperties = flowProperties
@@ -342,6 +348,12 @@ func (h *Handle) HandleWorkOrder(
 		noticeList         []int
 		sendSubject        string = "您有一条待办工单，请及时处理"
 		sendDescription    string = "您有一条待办工单请及时处理，工单描述如下"
+		paramsValue        struct {
+			Id       int           `json:"id"`
+			Title    string        `json:"title"`
+			Priority int           `json:"priority"`
+			FormData []interface{} `json:"form_data"`
+		}
 	)
 
 	defer func() {
@@ -389,7 +401,7 @@ func (h *Handle) HandleWorkOrder(
 	// 获取工单数据
 	err = orm.Eloquent.Model(&process.TplData{}).
 		Where("work_order = ?", workOrderId).
-		Pluck("form_data", &h.workOrderData).Error
+		Pluck("form_data", &h.WorkOrderData).Error
 	if err != nil {
 		return
 	}
@@ -536,18 +548,28 @@ func (h *Handle) HandleWorkOrder(
 			}
 		} else if len(sourceEdges) == 1 && len(targetEdges) > 1 {
 			// 出口
-			parallelStatusOk, err = h.completeAllParallel(c, sourceEdges[0]["target"].(string))
+			parallelStatusOk, err = h.completeAllParallel(sourceEdges[0]["target"].(string))
 			if err != nil {
 				err = fmt.Errorf("并行检测失败，%v", err.Error())
 				return
 			}
 			if parallelStatusOk {
 				h.endHistory = true
+				endAssignValue, ok := h.targetStateValue["assignValue"]
+				if !ok {
+					endAssignValue = []int{}
+				}
+
+				endAssignType, ok := h.targetStateValue["assignType"]
+				if !ok {
+					endAssignType = ""
+				}
+
 				h.updateValue["state"] = []map[string]interface{}{{
 					"id":             h.targetStateValue["id"].(string),
 					"label":          h.targetStateValue["label"],
-					"processor":      h.targetStateValue["assignValue"],
-					"process_method": h.targetStateValue["assignType"],
+					"processor":      endAssignValue,
+					"process_method": endAssignType,
 				}}
 				err = h.circulation()
 				if err != nil {
@@ -564,12 +586,11 @@ func (h *Handle) HandleWorkOrder(
 		}
 	// 包容网关
 	case "inclusiveGateway":
-		fmt.Println("inclusiveGateway")
 		return
 	case "start":
 		stateValue["processor"] = []int{h.workOrderDetails.Creator}
 		stateValue["process_method"] = "person"
-		h.updateValue["state"] = []interface{}{stateValue}
+		h.updateValue["state"] = []map[string]interface{}{stateValue}
 		err = h.circulation()
 		if err != nil {
 			return
@@ -577,7 +598,7 @@ func (h *Handle) HandleWorkOrder(
 	case "userTask":
 		stateValue["processor"] = h.targetStateValue["assignValue"].([]interface{})
 		stateValue["process_method"] = h.targetStateValue["assignType"].(string)
-		h.updateValue["state"] = []interface{}{stateValue}
+		h.updateValue["state"] = []map[string]interface{}{stateValue}
 		err = h.commonProcessing(c)
 		if err != nil {
 			return
@@ -585,7 +606,7 @@ func (h *Handle) HandleWorkOrder(
 	case "receiveTask":
 		stateValue["processor"] = h.targetStateValue["assignValue"].([]interface{})
 		stateValue["process_method"] = h.targetStateValue["assignType"].(string)
-		h.updateValue["state"] = []interface{}{stateValue}
+		h.updateValue["state"] = []map[string]interface{}{stateValue}
 		err = h.commonProcessing(c)
 		if err != nil {
 			return
@@ -593,11 +614,11 @@ func (h *Handle) HandleWorkOrder(
 	case "scriptTask":
 		stateValue["processor"] = []int{}
 		stateValue["process_method"] = ""
-		h.updateValue["state"] = []interface{}{stateValue}
+		h.updateValue["state"] = []map[string]interface{}{stateValue}
 	case "end":
 		stateValue["processor"] = []int{}
 		stateValue["process_method"] = ""
-		h.updateValue["state"] = []interface{}{stateValue}
+		h.updateValue["state"] = []map[string]interface{}{stateValue}
 		err = h.circulation()
 		if err != nil {
 			h.tx.Rollback()
@@ -609,6 +630,55 @@ func (h *Handle) HandleWorkOrder(
 		if err != nil {
 			h.tx.Rollback()
 			return
+		}
+	}
+
+	// 更新表单数据
+	for _, t := range tpls {
+		var (
+			tplValue []byte
+		)
+		tplValue, err = json.Marshal(t["tplValue"])
+		if err != nil {
+			h.tx.Rollback()
+			return
+		}
+
+		paramsValue.FormData = append(paramsValue.FormData, t["tplValue"])
+
+		// 是否可写，只有可写的模版可以更新数据
+		updateStatus := false
+		if h.stateValue["clazz"].(string) == "start" {
+			updateStatus = true
+		} else if writeTplList, writeOK := h.stateValue["writeTpls"]; writeOK {
+		tplListTag:
+			for _, writeTplId := range writeTplList.([]interface{}) {
+				if writeTplId == t["tplId"] { // 可写
+					// 是否隐藏，隐藏的模版无法修改数据
+					if hideTplList, hideOK := h.stateValue["hideTpls"]; hideOK {
+						for _, hideTplId := range hideTplList.([]interface{}) {
+							if hideTplId == t["tplId"] { // 隐藏的
+								updateStatus = false
+								break tplListTag
+							} else {
+								updateStatus = true
+							}
+						}
+					} else {
+						updateStatus = true
+					}
+				}
+			}
+		} else {
+			// 不可写
+			updateStatus = false
+		}
+		if updateStatus {
+			err = h.tx.Model(&process.TplData{}).Where("id = ?", t["tplDataId"]).Update("form_data", tplValue).Error
+			if err != nil {
+				h.tx.Rollback()
+				return
+			}
 		}
 	}
 
@@ -647,8 +717,8 @@ func (h *Handle) HandleWorkOrder(
 		Processor:    currentUserInfo.NickName,
 		ProcessorId:  tools.GetUserId(c),
 		CostDuration: costDurationValue,
+		Remarks:      remarks,
 	}
-
 	err = h.tx.Create(&cirHistoryData).Error
 	if err != nil {
 		h.tx.Rollback()
@@ -689,6 +759,7 @@ func (h *Handle) HandleWorkOrder(
 			Processor:   currentUserInfo.NickName,
 			ProcessorId: tools.GetUserId(c),
 			Circulation: "结束",
+			Remarks:     "工单已结束",
 		}).Error
 		if err != nil {
 			h.tx.Rollback()
@@ -723,7 +794,11 @@ func (h *Handle) HandleWorkOrder(
 
 	// 发送通知
 	if len(noticeList) > 0 {
-		sendToUserList, err = GetPrincipalUserInfo(h.updateValue["state"].([]interface{}), h.workOrderDetails.Creator)
+		stateList := make([]interface{}, 0)
+		for _, v := range h.updateValue["state"].([]map[string]interface{}) {
+			stateList = append(stateList, v)
+		}
+		sendToUserList, err = GetPrincipalUserInfo(stateList, h.workOrderDetails.Creator)
 		if err != nil {
 			return
 		}
@@ -758,7 +833,15 @@ continueTag:
 		}
 		execTasks = append(execTasks, task)
 	}
-	go ExecTask(execTasks)
+
+	paramsValue.Id = h.workOrderDetails.Id
+	paramsValue.Title = h.workOrderDetails.Title
+	paramsValue.Priority = h.workOrderDetails.Priority
+	params, err := json.Marshal(paramsValue)
+	if err != nil {
+		return err
+	}
+	go ExecTask(execTasks, string(params))
 
 	return
 }

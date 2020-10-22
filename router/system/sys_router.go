@@ -2,6 +2,8 @@ package system
 
 import (
 	log2 "ferry/apis/log"
+	"ferry/apis/monitor"
+	"ferry/apis/public"
 	"ferry/apis/system"
 	_ "ferry/docs"
 	"ferry/handler"
@@ -10,6 +12,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+func SysBaseRouter(r *gin.RouterGroup) {
+	//r.GET("/", system.HelloWorld)
+	r.GET("/info", handler.Ping)
+}
+
+func SysNoCheckRoleRouter(r *gin.RouterGroup) {
+	v1 := r.Group("/api/v1")
+
+	v1.GET("/monitor/server", monitor.ServerInfo)
+	v1.GET("/getCaptcha", system.GenerateCaptchaHandler)
+	v1.GET("/menuTreeselect", system.GetMenuTreeelect)
+	v1.GET("/settings", system.GetSettingsInfo)
+
+	registerPublicRouter(v1)
+}
 
 func RegisterBaseRouter(v1 *gin.RouterGroup, authMiddleware *jwt.GinJWTMiddleware) {
 	v1auth := v1.Use(authMiddleware.MiddlewareFunc()).Use(middleware.AuthCheckRole())
@@ -53,6 +71,7 @@ func RegisterLoginLogRouter(v1 *gin.RouterGroup, authMiddleware *jwt.GinJWTMiddl
 		loginlog.POST("", log2.InsertLoginLog)
 		loginlog.PUT("", log2.UpdateLoginLog)
 		loginlog.DELETE("/:infoId", log2.DeleteLoginLog)
+		loginlog.DELETE("", log2.CleanLoginLog)
 	}
 }
 
@@ -104,5 +123,19 @@ func RegisterDeptRouter(v1 *gin.RouterGroup, authMiddleware *jwt.GinJWTMiddlewar
 		dept.POST("", system.InsertDept)
 		dept.PUT("", system.UpdateDept)
 		dept.DELETE("/:id", system.DeleteDept)
+	}
+}
+
+func RegisterSysSettingRouter(v1 *gin.RouterGroup, authMiddleware *jwt.GinJWTMiddleware) {
+	setting := v1.Group("/settings").Use(authMiddleware.MiddlewareFunc()).Use(middleware.AuthCheckRole())
+	{
+		setting.POST("", system.SetSettingsInfo)
+	}
+}
+
+func registerPublicRouter(v1 *gin.RouterGroup) {
+	p := v1.Group("/public")
+	{
+		p.POST("/uploadFile", public.UploadFile)
 	}
 }

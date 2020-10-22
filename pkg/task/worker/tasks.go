@@ -2,50 +2,51 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"ferry/pkg/logger"
 	"os/exec"
 	"syscall"
 
-	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
 )
 
 var asyncTaskMap map[string]interface{}
 
-func executeTaskBase(scriptPath string) {
-	command := exec.Command("/bin/bash", "-c", scriptPath) //初始化Cmd
-	err := command.Start()                                 //运行脚本
-	if nil != err {
-		log.ERROR.Printf("task exec failed，%v", err.Error())
+func executeTaskBase(scriptPath string, params string) (err error) {
+	command := exec.Command(scriptPath, params) //初始化Cmd
+	out, err := command.CombinedOutput()
+	if err != nil {
+		logger.Errorf("task exec failed，%v", err.Error())
 		return
 	}
-
-	log.INFO.Println("Process PID:", command.Process.Pid)
-
-	err = command.Wait() //等待执行完成
-	if nil != err {
-		log.ERROR.Printf("task exec failed，%v", err.Error())
-		return
-	}
-
-	log.INFO.Println("ProcessState PID:", command.ProcessState.Pid())
-	log.INFO.Println("Exit Code", command.ProcessState.Sys().(syscall.WaitStatus).ExitStatus())
+	logger.Info("Output: ", string(out))
+	logger.Info("ProcessState PID: ", command.ProcessState.Pid())
+	logger.Info("Exit Code ", command.ProcessState.Sys().(syscall.WaitStatus).ExitStatus())
+	return
 }
 
 // ExecCommand 异步任务
-func ExecCommand(classify string, scriptPath string) error {
+func ExecCommand(classify string, scriptPath string, params string) (err error) {
 	if classify == "shell" {
-		log.INFO.Println("start exec shell...", scriptPath)
-		executeTaskBase(scriptPath)
-		return nil
+		logger.Info("start exec shell - ", scriptPath)
+		err = executeTaskBase(scriptPath, params)
+		if err != nil {
+			return
+		}
 	} else if classify == "python" {
-		log.INFO.Println("start exec python...", scriptPath)
-		executeTaskBase(scriptPath)
-		return nil
+		logger.Info("start exec python - ", scriptPath)
+		err = executeTaskBase(scriptPath, params)
+		if err != nil {
+			return
+		}
+	} else {
+		err = errors.New("目前仅支持Python与Shell脚本的执行，请知悉。")
+		return
 	}
-	return nil
+	return
 }
 
-func SendTask(ctx context.Context, classify string, scriptPath string) {
+func SendTask(ctx context.Context, classify string, scriptPath string, params string) {
 	args := make([]tasks.Arg, 0)
 	args = append(args, tasks.Arg{
 		Name:  "classify",
@@ -57,11 +58,16 @@ func SendTask(ctx context.Context, classify string, scriptPath string) {
 		Type:  "string",
 		Value: scriptPath,
 	})
+	args = append(args, tasks.Arg{
+		Name:  "params",
+		Type:  "string",
+		Value: params,
+	})
 	task, _ := tasks.NewSignature("ExecCommandTask", args)
 	task.RetryCount = 5
 	_, err := AsyncTaskCenter.SendTaskWithContext(ctx, task)
 	if err != nil {
-		log.ERROR.Println(err.Error())
+		logger.Error(err.Error())
 	}
 }
 
